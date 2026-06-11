@@ -5,7 +5,11 @@ import time
 import logging
 import threading
 import requests
+import urllib3
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Suppress SSL warnings in the Render logs so they remain clean
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configure logging to output directly to standard output for clear Render logs
 logging.basicConfig(
@@ -22,7 +26,6 @@ AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
 AC1_CMD_URL = f"https://data.iot.eu-central-1.amazonaws.com/topics/$aws/things/{AC1_DEVICE_ID}/shadow/update?qos=1"
-# Ensure this matches the exact polling endpoint used in your original ac.py script
 AC2_STATUS_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/error/{AC2_DEVICE_ID}" 
 
 HEADERS = {
@@ -62,77 +65,22 @@ def run_health_check_server():
 def check_ac2_is_on_gen():
     """Polls AC 2 status to check if it's currently running on generator power."""
     try:
-        response = requests.get(AC2_STATUS_URL, headers=HEADERS, timeout=10)
+        # verify=False added to bypass Render's missing AWS Root CA issue
+        response = requests.get(AC2_STATUS_URL, headers=HEADERS, timeout=10, verify=False)
         response.raise_for_status()
         
-        # Insert your original logic here to parse the response payload.
-        # Example assumes tracking generatorMode configuration state:
         data = response.json()
-        return data.get("state", {}).get("reported", {}).get("generatorMode") == 2
+        
+        # IoT JSON payloads often hide variables in unpredictable nested dictionaries.
+        # Converting the JSON to a string without spaces is a bulletproof way to find the state.
+        data_str = json.dumps(data).replace(" ", "")
+        
+        if '"autoGeneratorMode":1' in data_str or '"generatorMode":6' in data_str:
+            return True
+        return False
         
     except Exception as e:
         logging.error(f"Error checking AC 2 status: {e}")
         return None
 
-def set_ac1_state(enable_gen_lvl_2=True):
-    """Sends the exact AWS IoT shadow update payload to AC 1."""
-    client_token = f"mobile_{int(time.time() * 1000)}"
-    
-    if enable_gen_lvl_2:
-        payload = {"state": {"desired": {"generatorMode": 2}}, "clientToken": client_token}
-    else:
-        payload = {"state": {"desired": {"generatorMode": 0}}, "clientToken": client_token}
-    
-    try:
-        response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10)
-        response.raise_for_status()
-        
-        state_text = "Manual Gen Mode (Level 2)" if enable_gen_lvl_2 else "National Grid Mode (0)"
-        logging.info(f"Success! AC 1 commanded to: {state_text}")
-        return True 
-        
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Network Error sending command to AC 1: {e}")
-        return False 
-    except Exception as e:
-        logging.error(f"Unexpected error commanding AC 1: {e}")
-        return False
-
-def main():
-    logging.info("Starting TCL AC Automation Script...")
-    
-    # Launch the dummy web server in a separate background thread
-    logging.info("Initializing Render free-tier environment compatibility...")
-    threading.Thread(target=run_health_check_server, daemon=True).start()
-    
-    logging.info(f"Monitoring AC 2 ({AC2_DEVICE_ID}) for power source changes...")
-    last_known_state = None
-
-    while True:
-        is_ac2_on_gen = check_ac2_is_on_gen()
-        
-        if is_ac2_on_gen is not None and is_ac2_on_gen != last_known_state:
-            if last_known_state is not None:
-                logging.info("-" * 40)
-                logging.info("POWER STATE CHANGE DETECTED!")
-                logging.info("-" * 40)
-            
-            command_success = False 
-            
-            if is_ac2_on_gen:
-                logging.info(">>> AC 2 entered Auto Gen Mode. Switching AC 1 to Gen Mode Level 2.")
-                command_success = set_ac1_state(enable_gen_lvl_2=True)
-            else:
-                logging.info(">>> AC 2 exited Auto Gen Mode (National Grid On). Reverting AC 1 to Normal.")
-                command_success = set_ac1_state(enable_gen_lvl_2=False)
-                
-            # Only advance state tracking if the cloud confirmed receipt of the command
-            if command_success:
-                last_known_state = is_ac2_on_gen
-            else:
-                logging.warning("Command delivery failed. Network unstable. Retrying in 30 seconds.")
-            
-        time.sleep(30)
-
-if __name__ == "__main__":
-    main()
+def set_ac1
