@@ -89,9 +89,8 @@ def get_ac1_target_mode():
 def set_ac1_state(target_mode):
     """Sends the command payload to AC 1 via the TCL Cloud API."""
     
-    # Note: If the logs show "Success" but the AC does not physically respond, 
-    # change this line to: payload = {"params": {"generatorMode": target_mode}}
-    payload = {"generatorMode": target_mode}
+    # Wrapped in the "params" dictionary so the AC physical unit accepts it
+    payload = {"params": {"generatorMode": target_mode}}
     
     try:
         response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
