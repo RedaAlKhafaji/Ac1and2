@@ -83,4 +83,4 @@ def check_ac2_is_on_gen():
         logging.error(f"Error checking AC 2 status: {e}")
         return None
 
-def set_ac1
+def set_ac1_state(enable_gen_lvl_2=True):
