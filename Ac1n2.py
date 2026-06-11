@@ -25,7 +25,8 @@ APP_ID = "wx6e1af3fa84fbe523"
 AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
-AC1_CMD_URL = f"https://data.iot.eu-central-1.amazonaws.com/topics/$aws/things/{AC1_DEVICE_ID}/shadow/update?qos=1"
+# Route commands through the TCL Cloud API instead of direct AWS IoT
+AC1_CMD_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/control/{AC1_DEVICE_ID}"
 AC2_STATUS_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/error/{AC2_DEVICE_ID}" 
 
 HEADERS = {
@@ -65,14 +66,12 @@ def run_health_check_server():
 def check_ac2_is_on_gen():
     """Polls AC 2 status to check if it's currently running on generator power."""
     try:
-        # verify=False added to bypass Render's missing AWS Root CA issue
         response = requests.get(AC2_STATUS_URL, headers=HEADERS, timeout=10, verify=False)
         response.raise_for_status()
         
         data = response.json()
         
-        # IoT JSON payloads often hide variables in unpredictable nested dictionaries.
-        # Converting the JSON to a string without spaces is a bulletproof way to find the state.
+        # Convert JSON to string to reliably catch nested states
         data_str = json.dumps(data).replace(" ", "")
         
         if '"autoGeneratorMode":1' in data_str or '"generatorMode":6' in data_str:
@@ -84,16 +83,15 @@ def check_ac2_is_on_gen():
         return None
 
 def set_ac1_state(enable_gen_lvl_2=True):
-    """Sends the exact AWS IoT shadow update payload to AC 1."""
-    client_token = f"mobile_{int(time.time() * 1000)}"
+    """Sends the command payload to AC 1 via the TCL Cloud API."""
     
+    # The TCL API accepts flat dictionaries for property updates
     if enable_gen_lvl_2:
-        payload = {"state": {"desired": {"generatorMode": 2}}, "clientToken": client_token}
+        payload = {"generatorMode": 2}
     else:
-        payload = {"state": {"desired": {"generatorMode": 0}}, "clientToken": client_token}
+        payload = {"generatorMode": 0}
     
     try:
-        # verify=False added to bypass Render's missing AWS Root CA issue
         response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
         response.raise_for_status()
         
@@ -111,7 +109,6 @@ def set_ac1_state(enable_gen_lvl_2=True):
 def main():
     logging.info("Starting TCL AC Automation Script...")
     
-    # Launch the dummy web server in a separate background thread
     logging.info("Initializing Render free-tier environment compatibility...")
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
@@ -136,14 +133,12 @@ def main():
                 logging.info(">>> AC 2 exited Auto Gen Mode (National Grid On). Reverting AC 1 to Normal.")
                 command_success = set_ac1_state(enable_gen_lvl_2=False)
                 
-            # Only advance state tracking if the cloud confirmed receipt of the command
             if command_success:
                 last_known_state = is_ac2_on_gen
             else:
-                logging.warning("Command delivery failed. Network unstable. Retrying in 30 seconds.")
+                logging.warning("Command delivery failed. Retrying in 30 seconds.")
             
         time.sleep(30)
 
 if __name__ == "__main__":
     main()
-                
