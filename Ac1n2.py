@@ -89,8 +89,14 @@ def get_ac1_target_mode():
 def set_ac1_state(target_mode):
     """Sends the command payload to AC 1 via the TCL Cloud API."""
     
-    # Wrapped in the "params" dictionary so the AC physical unit accepts it
-    payload = {"params": {"generatorMode": target_mode}}
+    # Formatted exactly to the AWS IoT Device Shadow schema required by the physical unit
+    payload = {
+        "state": {
+            "desired": {
+                "generatorMode": target_mode
+            }
+        }
+    }
     
     try:
         response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
