@@ -25,7 +25,6 @@ APP_ID = "wx6e1af3fa84fbe523"
 AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
-# Route commands through the TCL Cloud API instead of direct AWS IoT
 AC1_CMD_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/control/{AC1_DEVICE_ID}"
 AC2_STATUS_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/error/{AC2_DEVICE_ID}" 
 
@@ -50,7 +49,7 @@ class RenderHealthCheckServer(BaseHTTPRequestHandler):
         self.wfile.write(b"TCL AC Automation Web Service is active.")
     
     def log_message(self, format, *args):
-        # Overridden to prevent UptimeRobot pings from spamming your logs every 10 minutes
+        # Overridden to prevent UptimeRobot pings from spamming your logs
         return
 
 def run_health_check_server():
@@ -63,40 +62,42 @@ def run_health_check_server():
 
 
 # ==================== AUTOMATION LOGIC ====================
-def check_ac2_is_on_gen():
-    """Polls AC 2 status to check if it's currently running on generator power."""
+def get_ac1_target_mode():
+    """Polls AC 2 status and determines what generatorMode AC 1 should be set to."""
     try:
         response = requests.get(AC2_STATUS_URL, headers=HEADERS, timeout=10, verify=False)
         response.raise_for_status()
         
         data = response.json()
-        
-        # Convert JSON to string to reliably catch nested states
         data_str = json.dumps(data).replace(" ", "")
         
-        if '"autoGeneratorMode":1' in data_str or '"generatorMode":6' in data_str:
-            return True
-        return False
+        # If AC 2 is set to mode 6, AC 1 must be forced to 0
+        if '"generatorMode":6' in data_str:
+            return 0
+            
+        # If AC 2 is in auto mode 1, AC 1 should go to 2
+        elif '"autoGeneratorMode":1' in data_str:
+            return 2
+            
+        # Default to 0 for normal operation / National Grid
+        return 0
         
     except Exception as e:
         logging.error(f"Error checking AC 2 status: {e}")
         return None
 
-def set_ac1_state(enable_gen_lvl_2=True):
+def set_ac1_state(target_mode):
     """Sends the command payload to AC 1 via the TCL Cloud API."""
     
-    # The TCL API accepts flat dictionaries for property updates
-    if enable_gen_lvl_2:
-        payload = {"generatorMode": 2}
-    else:
-        payload = {"generatorMode": 0}
+    # Note: If the logs show "Success" but the AC does not physically respond, 
+    # change this line to: payload = {"params": {"generatorMode": target_mode}}
+    payload = {"generatorMode": target_mode}
     
     try:
         response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
         response.raise_for_status()
         
-        state_text = "Manual Gen Mode (Level 2)" if enable_gen_lvl_2 else "National Grid Mode (0)"
-        logging.info(f"Success! AC 1 commanded to: {state_text}")
+        logging.info(f"Success! AC 1 commanded to: Mode {target_mode}")
         return True 
         
     except requests.exceptions.RequestException as e:
@@ -116,25 +117,23 @@ def main():
     last_known_state = None
 
     while True:
-        is_ac2_on_gen = check_ac2_is_on_gen()
+        target_mode = get_ac1_target_mode()
         
-        if is_ac2_on_gen is not None and is_ac2_on_gen != last_known_state:
+        if target_mode is not None and target_mode != last_known_state:
             if last_known_state is not None:
                 logging.info("-" * 40)
                 logging.info("POWER STATE CHANGE DETECTED!")
                 logging.info("-" * 40)
             
-            command_success = False 
-            
-            if is_ac2_on_gen:
-                logging.info(">>> AC 2 entered Auto Gen Mode. Switching AC 1 to Gen Mode Level 2.")
-                command_success = set_ac1_state(enable_gen_lvl_2=True)
-            else:
-                logging.info(">>> AC 2 exited Auto Gen Mode (National Grid On). Reverting AC 1 to Normal.")
-                command_success = set_ac1_state(enable_gen_lvl_2=False)
+            if target_mode == 2:
+                logging.info(">>> AC 2 entered Auto Gen Mode. Switching AC 1 to Mode 2.")
+            elif target_mode == 0:
+                logging.info(">>> AC 2 entered Mode 6 or Grid Mode. Reverting AC 1 to Mode 0.")
+                
+            command_success = set_ac1_state(target_mode)
                 
             if command_success:
-                last_known_state = is_ac2_on_gen
+                last_known_state = target_mode
             else:
                 logging.warning("Command delivery failed. Retrying in 30 seconds.")
             
