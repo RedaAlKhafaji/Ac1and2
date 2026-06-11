@@ -84,3 +84,66 @@ def check_ac2_is_on_gen():
         return None
 
 def set_ac1_state(enable_gen_lvl_2=True):
+    """Sends the exact AWS IoT shadow update payload to AC 1."""
+    client_token = f"mobile_{int(time.time() * 1000)}"
+    
+    if enable_gen_lvl_2:
+        payload = {"state": {"desired": {"generatorMode": 2}}, "clientToken": client_token}
+    else:
+        payload = {"state": {"desired": {"generatorMode": 0}}, "clientToken": client_token}
+    
+    try:
+        # verify=False added to bypass Render's missing AWS Root CA issue
+        response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
+        response.raise_for_status()
+        
+        state_text = "Manual Gen Mode (Level 2)" if enable_gen_lvl_2 else "National Grid Mode (0)"
+        logging.info(f"Success! AC 1 commanded to: {state_text}")
+        return True 
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network Error sending command to AC 1: {e}")
+        return False 
+    except Exception as e:
+        logging.error(f"Unexpected error commanding AC 1: {e}")
+        return False
+
+def main():
+    logging.info("Starting TCL AC Automation Script...")
+    
+    # Launch the dummy web server in a separate background thread
+    logging.info("Initializing Render free-tier environment compatibility...")
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
+    logging.info(f"Monitoring AC 2 ({AC2_DEVICE_ID}) for power source changes...")
+    last_known_state = None
+
+    while True:
+        is_ac2_on_gen = check_ac2_is_on_gen()
+        
+        if is_ac2_on_gen is not None and is_ac2_on_gen != last_known_state:
+            if last_known_state is not None:
+                logging.info("-" * 40)
+                logging.info("POWER STATE CHANGE DETECTED!")
+                logging.info("-" * 40)
+            
+            command_success = False 
+            
+            if is_ac2_on_gen:
+                logging.info(">>> AC 2 entered Auto Gen Mode. Switching AC 1 to Gen Mode Level 2.")
+                command_success = set_ac1_state(enable_gen_lvl_2=True)
+            else:
+                logging.info(">>> AC 2 exited Auto Gen Mode (National Grid On). Reverting AC 1 to Normal.")
+                command_success = set_ac1_state(enable_gen_lvl_2=False)
+                
+            # Only advance state tracking if the cloud confirmed receipt of the command
+            if command_success:
+                last_known_state = is_ac2_on_gen
+            else:
+                logging.warning("Command delivery failed. Network unstable. Retrying in 30 seconds.")
+            
+        time.sleep(30)
+
+if __name__ == "__main__":
+    main()
+                
