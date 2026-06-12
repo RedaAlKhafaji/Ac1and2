@@ -132,7 +132,7 @@ class TCLCloud:
                 desired_state["windSpeed"] = 6
                 logging.info(f"Target Mode 0 detected. Adding Turbo and Max WindSpeed to payload.")
             else:
-                # If switching to Generator (Mode 2), ensure Turbo is disabled to save power
+                # If switching to Generator, ensure Turbo is disabled to save power
                 desired_state["turbo"] = 0
             
             payload = {
@@ -156,18 +156,23 @@ class TCLCloud:
 
 
 def get_target_mode(ac2_state):
-    """Calculates what AC 1 should be set to strictly based on AC 2's live power telemetry."""
+    """Calculates what AC 1 should be set to based on AC 2's auto gen data and power telemetry."""
     try:
         gen_mode = int(ac2_state.get("generatorMode", 0))
     except (ValueError, TypeError):
         gen_mode = 0
+        
+    try:
+        auto_gen_mode = int(ac2_state.get("autoGeneratorMode", 0))
+    except (ValueError, TypeError):
+        auto_gen_mode = 0
     
-    # If AC 2 is completely off Gen Mode (Grid power) or in Mode 6
-    if gen_mode == 0 or gen_mode == 6:
+    # If AC 2 explicitly reports Mode 6 (which overrides to Grid Mode)
+    if gen_mode == 6:
         return 0
         
-    # If AC 2 is actively running on the generator (Level 1, 2, or 3)
-    elif gen_mode in [1, 2, 3]:
+    # If AC 2 explicitly reports Auto Generator Mode is active (1) or Manual Gen is active
+    elif auto_gen_mode == 1 or gen_mode in [1, 2, 3]:
         return 2
         
     return 0
@@ -196,7 +201,7 @@ def main():
                 if current_mode != target_mode:
                     logging.info("-" * 40)
                     logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
-                    logging.info(f"Diagnostic - AC 2 Live GenMode: {ac2_state.get('generatorMode', 'None')}")
+                    logging.info(f"Diagnostic - AC 2 Live GenMode: {ac2_state.get('generatorMode', '0')}, AutoGenMode: {ac2_state.get('autoGeneratorMode', '0')}")
                     logging.info(f"Applying Mode {target_mode} to AC 1...")
                     
                     success = cloud.set_ac_generator_mode(AC1_DEVICE_ID, target_mode)
