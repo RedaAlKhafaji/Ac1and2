@@ -39,6 +39,13 @@ class RenderHealthCheckServer(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(b"TCL AC Automation Web Service is active.")
+        
+    def do_HEAD(self):
+        """Answers UptimeRobot's invisible pings to prevent 501 errors."""
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        
     def log_message(self, format, *args):
         return
 
@@ -156,23 +163,15 @@ class TCLCloud:
 
 
 def get_target_mode(ac2_state):
-    """Calculates what AC 1 should be set to based on AC 2's auto gen data and power telemetry."""
+    """Calculates what AC 1 should be set to based strictly on physical power telemetry."""
     try:
         gen_mode = int(ac2_state.get("generatorMode", 0))
     except (ValueError, TypeError):
         gen_mode = 0
         
-    try:
-        auto_gen_mode = int(ac2_state.get("autoGeneratorMode", 0))
-    except (ValueError, TypeError):
-        auto_gen_mode = 0
-    
-    # If AC 2 explicitly reports Mode 6 (which overrides to Grid Mode)
-    if gen_mode == 6:
+    if gen_mode == 0 or gen_mode == 6:
         return 0
-        
-    # If AC 2 explicitly reports Auto Generator Mode is active (1) or Manual Gen is active
-    elif auto_gen_mode == 1 or gen_mode in [1, 2, 3]:
+    elif gen_mode in [1, 2, 3]:
         return 2
         
     return 0
@@ -201,7 +200,6 @@ def main():
                 if current_mode != target_mode:
                     logging.info("-" * 40)
                     logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
-                    logging.info(f"Diagnostic - AC 2 Live GenMode: {ac2_state.get('generatorMode', '0')}, AutoGenMode: {ac2_state.get('autoGeneratorMode', '0')}")
                     logging.info(f"Applying Mode {target_mode} to AC 1...")
                     
                     success = cloud.set_ac_generator_mode(AC1_DEVICE_ID, target_mode)
