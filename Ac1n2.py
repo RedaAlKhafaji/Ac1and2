@@ -23,11 +23,9 @@ logging.basicConfig(
 
 # ==================== CONFIGURATION ====================
 ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTE3Mzc5OCJ9.8DzjfzDlH2TmIs5U4-0ucKYcu9eIWKzz27Hiujp-3O6aXUz6-QA8wWEl7OHFIpQ0KccAyxWhm4G4PP2xbyjUtg"
-
-# ⚠️ VERY IMPORTANT: Paste your SSO Token from your HAR file here 
 SSO_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM3MjI1NDYsImlhdCI6MTc4MTEzMDU0Niwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.QQuxbnzJoZ_s4ncpSHX6jPA9y4_3V06EjfftN4ErWY0pnk0YPhM2a9Ow7Ix4-bEjlJyqUx9leU-OFI0Xbilt30gqlNiGBNFH2L-bGjBStNPotNh9YA0-aPMm5_9f5ZCxcKX6mHjfzG60FotBrmDZjIW7oqWb5OwoY__myvj_XZE"
-
 APP_ID = "wx6e1af3fa84fbe523"
+
 AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
@@ -108,10 +106,6 @@ def get_cognito_tokens():
 def set_ac1_state(target_mode):
     """Sends the command payload securely to AC 1 using AWS IoT Device Shadows."""
     try:
-        if SSO_TOKEN == "PASTE_YOUR_SSO_TOKEN_HERE":
-            logging.error("SSO_TOKEN is missing! Please paste it into the script.")
-            return False
-
         # 1. Grab fresh Cognito identity keys from TCL
         cognito_id, cognito_token = get_cognito_tokens()
         
@@ -150,9 +144,10 @@ def set_ac1_state(target_mode):
             "clientToken": f"mobile_{int(time.time() * 1000)}"
         }
         
-        # 5. Push the change instantly
-        iot_client.update_thing_shadow(
-            thingName=AC1_DEVICE_ID,
+        # 5. Push the change instantly using the specific restricted MQTT topic
+        iot_client.publish(
+            topic=f"$aws/things/{AC1_DEVICE_ID}/shadow/update",
+            qos=1,
             payload=json.dumps(payload).encode('utf-8')
         )
         
