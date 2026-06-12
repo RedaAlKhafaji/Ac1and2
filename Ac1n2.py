@@ -71,7 +71,6 @@ class TCLCloud:
 
     def refresh_client(self):
         """Ensures the AWS IoT Data Plane connection is active and valid."""
-        # Refresh if credentials will expire in less than 5 minutes
         if self.iot_client and time.time() < self.credentials_expiry - 300:
             return self.iot_client
         
@@ -101,7 +100,7 @@ class TCLCloud:
             aws_session_token=aws_creds['SessionToken']
         )
         
-        self.credentials_expiry = time.time() + 3600 # AWS tokens generally valid for 1 hour
+        self.credentials_expiry = time.time() + 3600
         logging.info("AWS IoT Data Plane connection established.")
         return self.iot_client
 
@@ -114,7 +113,6 @@ class TCLCloud:
             return payload_dict.get("state", {}).get("reported", {})
         except Exception as e:
             logging.error(f"Error reading shadow for {device_id}: {e}")
-            # If the tokens expire or signature changes, wipe the client so it rebuilds next loop
             if "Forbidden" in str(e) or "Expired" in str(e) or "Signature" in str(e):
                 self.iot_client = None
             return None
@@ -123,11 +121,23 @@ class TCLCloud:
         """Sends the command payload securely to the physical unit."""
         try:
             client = self.refresh_client()
+            
+            desired_state = {
+                "generatorMode": target_mode
+            }
+            
+            # If switching to National Grid (Mode 0), activate Turbo and max fan speed
+            if target_mode == 0:
+                desired_state["turbo"] = 1
+                desired_state["windSpeed"] = 6
+                logging.info(f"Target Mode 0 detected. Adding Turbo and Max WindSpeed to payload.")
+            else:
+                # If switching to Generator (Mode 2), ensure Turbo is disabled to save power
+                desired_state["turbo"] = 0
+            
             payload = {
                 "state": {
-                    "desired": {
-                        "generatorMode": target_mode
-                    }
+                    "desired": desired_state
                 },
                 "clientToken": f"mobile_{int(time.time() * 1000)}"
             }
@@ -147,13 +157,21 @@ class TCLCloud:
 
 def get_target_mode(ac2_state):
     """Calculates what AC 1 should be set to based on AC 2's telemetry."""
-    gen_mode = ac2_state.get("generatorMode", 0)
-    auto_gen_mode = ac2_state.get("autoGeneratorMode", 0)
+    try:
+        gen_mode = int(ac2_state.get("generatorMode", 0))
+    except (ValueError, TypeError):
+        gen_mode = 0
+        
+    try:
+        auto_gen_mode = int(ac2_state.get("autoGeneratorMode", 0))
+    except (ValueError, TypeError):
+        auto_gen_mode = 0
     
     if gen_mode == 6:
         return 0
     elif auto_gen_mode == 1 or gen_mode == 1 or gen_mode == 2:
         return 2
+        
     return 0
 
 
@@ -166,18 +184,17 @@ def main():
 
     while True:
         try:
-            # Securely fetch both live telemetry states
             ac2_state = cloud.get_ac_state(AC2_DEVICE_ID)
             ac1_state = cloud.get_ac_state(AC1_DEVICE_ID)
             
             if ac2_state is not None and ac1_state is not None:
-                # 1. Determine what AC 1 SHOULD be doing based on AC 2's power state
                 target_mode = get_target_mode(ac2_state)
                 
-                # 2. See what AC 1 is ACTUALLY doing right now
-                current_mode = ac1_state.get("generatorMode", 0)
+                try:
+                    current_mode = int(ac1_state.get("generatorMode", 0))
+                except (ValueError, TypeError):
+                    current_mode = 0
                 
-                # 3. Only send a command if AC 1 is out of sync
                 if current_mode != target_mode:
                     logging.info("-" * 40)
                     logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
