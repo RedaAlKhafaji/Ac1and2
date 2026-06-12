@@ -6,12 +6,15 @@ import logging
 import threading
 import requests
 import urllib3
+import boto3
+from botocore.config import Config
+from botocore import UNSIGNED
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# Suppress SSL warnings in the Render logs so they remain clean
+# Suppress SSL warnings in the Render logs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configure logging to output directly to standard output for clear Render logs
+# Configure logging to output directly to standard output
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -20,13 +23,16 @@ logging.basicConfig(
 
 # ==================== CONFIGURATION ====================
 ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTE3Mzc5OCJ9.8DzjfzDlH2TmIs5U4-0ucKYcu9eIWKzz27Hiujp-3O6aXUz6-QA8wWEl7OHFIpQ0KccAyxWhm4G4PP2xbyjUtg"
-APP_ID = "wx6e1af3fa84fbe523"
 
+# ⚠️ VERY IMPORTANT: Paste your SSO Token from your HAR file here 
+SSO_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM3MjI1NDYsImlhdCI6MTc4MTEzMDU0Niwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.QQuxbnzJoZ_s4ncpSHX6jPA9y4_3V06EjfftN4ErWY0pnk0YPhM2a9Ow7Ix4-bEjlJyqUx9leU-OFI0Xbilt30gqlNiGBNFH2L-bGjBStNPotNh9YA0-aPMm5_9f5ZCxcKX6mHjfzG60FotBrmDZjIW7oqWb5OwoY__myvj_XZE"
+
+APP_ID = "wx6e1af3fa84fbe523"
 AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
-AC1_CMD_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/control/{AC1_DEVICE_ID}"
 AC2_STATUS_URL = f"https://eu-api-prod.aws.tcljd.com/v1/thing/error/{AC2_DEVICE_ID}" 
+LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 
 HEADERS = {
     "user-agent": "Dart/3.4 (dart:io)",
@@ -49,7 +55,6 @@ class RenderHealthCheckServer(BaseHTTPRequestHandler):
         self.wfile.write(b"TCL AC Automation Web Service is active.")
     
     def log_message(self, format, *args):
-        # Overridden to prevent UptimeRobot pings from spamming your logs
         return
 
 def run_health_check_server():
@@ -71,49 +76,95 @@ def get_ac1_target_mode():
         data = response.json()
         data_str = json.dumps(data).replace(" ", "")
         
-        # If AC 2 is set to mode 6, AC 1 must be forced to 0
         if '"generatorMode":6' in data_str:
             return 0
-            
-        # If AC 2 is in auto mode 1, AC 1 should go to 2
         elif '"autoGeneratorMode":1' in data_str:
             return 2
             
-        # Default to 0 for normal operation / National Grid
         return 0
         
     except Exception as e:
         logging.error(f"Error checking AC 2 status: {e}")
         return None
 
-def set_ac1_state(target_mode):
-    """Sends the command payload to AC 1 via the TCL Cloud API."""
-    
-    # Formatted exactly to the AWS IoT Device Shadow schema required by the physical unit
-    payload = {
-        "state": {
-            "desired": {
-                "generatorMode": target_mode
-            }
-        }
+def get_cognito_tokens():
+    """Fetches fresh AWS Cognito credentials from the TCL loadBalance API."""
+    auth_headers = {
+        "appid": APP_ID,
+        "ssotoken": SSO_TOKEN,
+        "user-agent": "Dart/3.4 (dart:io)",
+        "accept-encoding": "gzip"
     }
     
-    try:
-        response = requests.post(AC1_CMD_URL, headers=HEADERS, json=payload, timeout=10, verify=False)
-        response.raise_for_status()
+    response = requests.get(LOAD_BALANCE_URL, headers=auth_headers, timeout=10, verify=False)
+    response.raise_for_status()
+    data = response.json()
+    
+    if "data" not in data or "cognitoId" not in data["data"]:
+        raise ValueError("Failed to fetch Cognito Tokens. Check if SSO_TOKEN is correct and not expired.")
         
-        logging.info(f"Success! AC 1 commanded to: Mode {target_mode}")
+    return data["data"]["cognitoId"], data["data"]["cognitoToken"]
+
+def set_ac1_state(target_mode):
+    """Sends the command payload securely to AC 1 using AWS IoT Device Shadows."""
+    try:
+        if SSO_TOKEN == "PASTE_YOUR_SSO_TOKEN_HERE":
+            logging.error("SSO_TOKEN is missing! Please paste it into the script.")
+            return False
+
+        # 1. Grab fresh Cognito identity keys from TCL
+        cognito_id, cognito_token = get_cognito_tokens()
+        
+        # 2. Trade the TCL tokens for temporary AWS hardware credentials
+        cognito_client = boto3.client(
+            'cognito-identity', 
+            region_name='eu-central-1', 
+            verify=False,
+            config=Config(signature_version=UNSIGNED)
+        )
+        
+        creds_resp = cognito_client.get_credentials_for_identity(
+            IdentityId=cognito_id,
+            Logins={'cognito-identity.amazonaws.com': cognito_token}
+        )
+        aws_creds = creds_resp['Credentials']
+        
+        # 3. Connect directly to the AWS IoT Data Plane
+        iot_client = boto3.client(
+            'iot-data', 
+            region_name='eu-central-1',
+            endpoint_url='https://data.iot.eu-central-1.amazonaws.com',
+            verify=False,
+            aws_access_key_id=aws_creds['AccessKeyId'],
+            aws_secret_access_key=aws_creds['SecretKey'],
+            aws_session_token=aws_creds['SessionToken']
+        )
+        
+        # 4. Construct the physical unit's desired shadow payload
+        payload = {
+            "state": {
+                "desired": {
+                    "generatorMode": target_mode
+                }
+            },
+            "clientToken": f"mobile_{int(time.time() * 1000)}"
+        }
+        
+        # 5. Push the change instantly
+        iot_client.update_thing_shadow(
+            thingName=AC1_DEVICE_ID,
+            payload=json.dumps(payload).encode('utf-8')
+        )
+        
+        logging.info(f"Success! AC 1 commanded to Mode {target_mode} via AWS IoT Push.")
         return True 
         
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Network Error sending command to AC 1: {e}")
-        return False 
     except Exception as e:
-        logging.error(f"Unexpected error commanding AC 1: {e}")
+        logging.error(f"Error sending AWS command to AC 1: {e}")
         return False
 
 def main():
-    logging.info("Starting TCL AC Automation Script...")
+    logging.info("Starting TCL AC Automation Script (AWS IoT Mode)...")
     
     logging.info("Initializing Render free-tier environment compatibility...")
     threading.Thread(target=run_health_check_server, daemon=True).start()
