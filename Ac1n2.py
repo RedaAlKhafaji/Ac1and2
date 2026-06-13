@@ -4,16 +4,28 @@ from botocore import UNSIGNED
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO)
 
-# Use the token that we confirmed works
-SSO_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
+REFRESH_TOKEN = os.environ.get("REFRESH_TOKEN")
 AC1, AC2 = "C-0JABFAAAI", "DfaxahFAAAE"
 
 class TCLCloud:
     def __init__(self): self.iot = None
+    
     def refresh(self):
-        # Direct LoadBalance call with the valid SSO_TOKEN
+        logging.info("Attempting refresh...")
+        # 1. Exchange Refresh Token
+        resp = requests.post("https://eu-api-prod.aws.tcljd.com/v1/auth/login", 
+                             json={"appid": "wx6e1af3fa84fbe523", "refreshtoken": REFRESH_TOKEN}, verify=False)
+        res_json = resp.json()
+        if "data" not in res_json:
+            logging.error(f"Login failed! Server returned: {res_json}")
+            raise KeyError("No 'data' in response")
+            
+        sso = res_json["data"]["ssoToken"]
+        
+        # 2. Get AWS credentials
         data = requests.get("https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance", 
-                            headers={"appid": "wx6e1af3fa84fbe523", "ssotoken": SSO_TOKEN}, verify=False).json()["data"]
+                            headers={"appid": "wx6e1af3fa84fbe523", "ssotoken": sso}, verify=False).json()["data"]
+        
         cognito = boto3.client('cognito-identity', region_name='eu-central-1', verify=False, config=Config(signature_version=UNSIGNED))
         creds = cognito.get_credentials_for_identity(IdentityId=data["cognitoId"], Logins={'cognito-identity.amazonaws.com': data["cognitoToken"]})['Credentials']
         self.iot = boto3.client('iot-data', region_name='eu-central-1', endpoint_url='https://data.iot.eu-central-1.amazonaws.com', verify=False,
@@ -30,8 +42,11 @@ cloud.refresh()
 while True:
     try:
         ac2 = cloud.get_ac2()
-        # Strictly checking for mode 2
-        target = 2 if ac2.get("generatorMode") == 2 else 0
+        mode = int(ac2.get("generatorMode", 6))
+        # Sync: Only target 2 if mode is 2
+        target = 2 if mode == 2 else 0
         cloud.set_mode(target)
-    except: cloud.refresh()
+    except Exception as e:
+        logging.error(f"Error occurred: {e}")
+        cloud.refresh()
     time.sleep(60)
