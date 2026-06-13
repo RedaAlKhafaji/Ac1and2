@@ -6,16 +6,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Credentials from Environment Variables
-SSO = os.environ.get("SSO_TOKEN", "")
-AT = os.environ.get("ACCESS_TOKEN", "")
+# --- HARDCODED TOKENS ---
+SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
+AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTM0ODkzOCJ9.-wmsuNpkEpj0qoAtGRR8G7zpH1YHyTaQJ63ZK0O3hpBm7JRsJxe0mzBJ3CGywLTf8TzfyG8bavac5ERjmwKC1A"
 
 AC1, AC2 = "C-0JABFAAAI", "DfaxahFAAAE"
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 APP_ID = "wx6e1af3fa84fbe523"
 
 # --- RENDER HEALTH CHECK SERVER ---
-# REQUIRED to keep the free Web Service alive and pass Render's port checks.
 class RenderHealthCheckServer(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers()
     def do_HEAD(self): self.send_response(200); self.end_headers()
@@ -61,11 +60,7 @@ class TCLCloud:
         return json.loads(shadow['payload'].read().decode('utf-8')).get("state", {}).get("reported", {})
 
 def main():
-    # Start the background web server for Render
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    
-    if not SSO or not AT:
-        logging.error("CRITICAL: SSO_TOKEN or ACCESS_TOKEN environment variables are missing!")
     
     cloud = TCLCloud()
     
@@ -80,7 +75,7 @@ def main():
                 
             mode = int(ac2_state.get("generatorMode", 6))
             
-            # STRICT LOGIC: Set AC 1 to Level 2 ONLY if AC 2 is explicitly 2.
+            # Target is 2 if AC2 is explicitly 2, otherwise Target is 0
             target = 2 if mode == 2 else 0
             
             logging.info(f"AC 2 Mode is {mode} | Commanding AC 1 to {target}")
@@ -88,7 +83,7 @@ def main():
             
         except Exception as e:
             logging.error(f"Loop error: {e}")
-            cloud.iot = None # Force a fresh connection on the next attempt
+            cloud.iot = None 
             
         time.sleep(60)
 
