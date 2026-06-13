@@ -78,12 +78,10 @@ def main():
             auto = int(ac2_state.get("autoGeneratorMode", 0))
             
             # THE LOGIC FIX:
-            # Check if either Manual Mode OR Auto Mode indicates a generator restriction (1, 2, or 3).
-            # AC 1 mirrors the exact restriction level that is actively throttling AC 2.
-            if mode in [1, 2, 3]:
-                target = mode
-            elif auto in [1, 2, 3]:
-                target = auto
+            # If AC2 is under ANY generator restriction (1, 2, or 3) from either manual or auto mode,
+            # Force AC1 specifically to Level 2. Otherwise, set it to 0 (Off).
+            if mode in [1, 2, 3] or auto in [1, 2, 3]:
+                target = 2
             else:
                 target = 0
             
