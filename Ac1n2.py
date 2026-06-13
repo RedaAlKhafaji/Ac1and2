@@ -73,12 +73,21 @@ def main():
             if not ac2_state:
                 raise Exception("Failed to read AC 2 state.")
                 
+            # Fetch both Manual and Auto modes
             mode = int(ac2_state.get("generatorMode", 6))
+            auto = int(ac2_state.get("autoGeneratorMode", 0))
             
-            # Target is 2 if AC2 is explicitly 2, otherwise Target is 0
-            target = 2 if mode == 2 else 0
+            # THE LOGIC FIX:
+            # Check if either Manual Mode OR Auto Mode indicates a generator restriction (1, 2, or 3).
+            # AC 1 mirrors the exact restriction level that is actively throttling AC 2.
+            if mode in [1, 2, 3]:
+                target = mode
+            elif auto in [1, 2, 3]:
+                target = auto
+            else:
+                target = 0
             
-            logging.info(f"AC 2 Mode is {mode} | Commanding AC 1 to {target}")
+            logging.info(f"AC 2 Manual: {mode} | AC 2 Auto: {auto} -> Commanding AC 1 to {target}")
             cloud.set_mode(target)
             
         except Exception as e:
