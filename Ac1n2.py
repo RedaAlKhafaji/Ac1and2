@@ -14,7 +14,6 @@ AC1, AC2 = "C-0JABFAAAI", "DfaxahFAAAE"
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 APP_ID = "wx6e1af3fa84fbe523"
 
-# --- RENDER HEALTH CHECK SERVER ---
 class RenderHealthCheckServer(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers()
     def do_HEAD(self): self.send_response(200); self.end_headers()
@@ -22,37 +21,27 @@ class RenderHealthCheckServer(BaseHTTPRequestHandler):
 
 def run_health_check_server():
     port = int(os.environ.get("PORT", 10000))
-    logging.info(f"Starting Render health-check server on port {port}")
     HTTPServer(("0.0.0.0", port), RenderHealthCheckServer).serve_forever()
-# ----------------------------------
 
 class TCLCloud:
     def __init__(self): 
         self.iot = None
 
     def connect(self):
-        logging.info("Connecting to TCL and AWS IoT...")
         headers = {"appid": APP_ID, "ssotoken": SSO, "accesstoken": AT}
-        resp = requests.get(LOAD_BALANCE_URL, headers=headers, verify=False)
-        resp_json = resp.json()
+        resp = requests.get(LOAD_BALANCE_URL, headers=headers, verify=False).json()
+        data = resp["data"]
         
-        if "data" not in resp_json:
-            logging.error(f"Auth failed. Server response: {resp_json}")
-            raise Exception("Invalid tokens or session expired.")
-            
-        data = resp_json["data"]
         cognito = boto3.client('cognito-identity', region_name='eu-central-1', verify=False, config=Config(signature_version=UNSIGNED))
         creds = cognito.get_credentials_for_identity(IdentityId=data["cognitoId"], Logins={'cognito-identity.amazonaws.com': data["cognitoToken"]})['Credentials']
         
         self.iot = boto3.client('iot-data', region_name='eu-central-1', endpoint_url='https://data.iot.eu-central-1.amazonaws.com', verify=False,
                                aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretKey'], aws_session_token=creds['SessionToken'])
-        logging.info("AWS IoT Connection established.")
 
     def set_mode(self, target):
         if not self.iot: return
         payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1 if target == 0 else 0}}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
-        logging.info(f"Successfully commanded AC 1 to Mode {target}")
 
     def get_ac2(self):
         if not self.iot: return {}
@@ -61,7 +50,6 @@ class TCLCloud:
 
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    
     cloud = TCLCloud()
     
     while True:
@@ -69,29 +57,28 @@ def main():
             if cloud.iot is None:
                 cloud.connect()
                 
-            ac2_state = cloud.get_ac2()
-            if not ac2_state:
-                raise Exception("Failed to read AC 2 state.")
+            ac2 = cloud.get_ac2()
+            if not ac2:
+                continue
                 
-            # 1. Print the entire raw payload so we can verify the exact keys
-            logging.info(f"Raw AC 2 Payload: {ac2_state}")
+            # Extract the critical variables
+            power = int(ac2.get("powerSwitch", 0))
+            mode = int(ac2.get("generatorMode", 6))
+            auto = int(ac2.get("autoGeneratorMode", 0))
             
-            # 2. Extract strictly the dynamic current state
-            current_state_raw = ac2_state.get("currentState", 
-                                ac2_state.get("currentGeneratorMode", 
-                                ac2_state.get("operateState", 0)))
-                                
-            # Safely convert to integer
-            try:
-                current_state = int(current_state_raw)
-            except (ValueError, TypeError):
-                current_state = 0
+            # The Logic Check
+            if power == 0:
+                # If AC 2 is completely turned off, ignore its generator settings
+                target = 0
+                logging.info(f"AC 2 is OFF (PowerSwitch: 0) -> Commanding AC 1 to {target}")
+            else:
+                # If AC 2 is ON, evaluate if it is restricted by manual or auto mode
+                if mode in [1, 2, 3] or auto in [1, 2, 3]:
+                    target = 2
+                else:
+                    target = 0
+                logging.info(f"AC 2 is ON | Manual: {mode}, Auto: {auto} -> Commanding AC 1 to {target}")
             
-            # 3. The Strict Logic: Ignore the static settings. 
-            # If the unit is physically operating in 1, 2, or 3, force AC 1 to 2.
-            target = 2 if current_state in [1, 2, 3] else 0
-            
-            logging.info(f"AC 2 Active State is {current_state} -> Commanding AC 1 to {target}")
             cloud.set_mode(target)
             
         except Exception as e:
