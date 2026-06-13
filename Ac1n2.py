@@ -63,21 +63,29 @@ def main():
                 
             # Extract the critical variables
             power = int(ac2.get("powerSwitch", 0))
-            mode = int(ac2.get("generatorMode", 6))
-            auto = int(ac2.get("autoGeneratorMode", 0))
+            power_source = int(ac2.get("powerSource", 0)) # 1 = Generator Active
+            auto = int(ac2.get("autoGeneratorMode", 0))   # To log the specific level
+            mode = int(ac2.get("generatorMode", 6))       # Manual mode fallback
             
-            # The Logic Check
+            # The STRICT Hardware Logic
             if power == 0:
-                # If AC 2 is completely turned off, ignore its generator settings
                 target = 0
-                logging.info(f"AC 2 is OFF (PowerSwitch: 0) -> Commanding AC 1 to {target}")
+                logging.info("AC 2 is OFF -> Commanding AC 1 to 0 (Off)")
+                
+            elif power_source == 1:
+                # The hardware explicitly detects it is running on the generator!
+                target = 2
+                logging.info(f"AC 2 is ON GENERATOR (Auto level: {auto}) -> Commanding AC 1 to 2")
+                
+            elif mode in [1, 2, 3]:
+                # Fallback: Just in case you manually force it into a generator mode
+                target = 2
+                logging.info(f"AC 2 is manually forced to Gen Mode {mode} -> Commanding AC 1 to 2")
+                
             else:
-                # If AC 2 is ON, evaluate if it is restricted by manual or auto mode
-                if mode in [1, 2, 3] or auto in [1, 2, 3]:
-                    target = 2
-                else:
-                    target = 0
-                logging.info(f"AC 2 is ON | Manual: {mode}, Auto: {auto} -> Commanding AC 1 to {target}")
+                # Unit is ON and powerSource is not 1 (meaning it's on Grid)
+                target = 0
+                logging.info("AC 2 is on GRID -> Commanding AC 1 to 0")
             
             cloud.set_mode(target)
             
