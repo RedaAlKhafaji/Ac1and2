@@ -73,19 +73,25 @@ def main():
             if not ac2_state:
                 raise Exception("Failed to read AC 2 state.")
                 
-            # Fetch both Manual and Auto modes
-            mode = int(ac2_state.get("generatorMode", 6))
-            auto = int(ac2_state.get("autoGeneratorMode", 0))
+            # 1. Print the entire raw payload so we can verify the exact keys
+            logging.info(f"Raw AC 2 Payload: {ac2_state}")
             
-            # THE LOGIC FIX:
-            # If AC2 is under ANY generator restriction (1, 2, or 3) from either manual or auto mode,
-            # Force AC1 specifically to Level 2. Otherwise, set it to 0 (Off).
-            if mode in [1, 2, 3] or auto in [1, 2, 3]:
-                target = 2
-            else:
-                target = 0
+            # 2. Extract strictly the dynamic current state
+            current_state_raw = ac2_state.get("currentState", 
+                                ac2_state.get("currentGeneratorMode", 
+                                ac2_state.get("operateState", 0)))
+                                
+            # Safely convert to integer
+            try:
+                current_state = int(current_state_raw)
+            except (ValueError, TypeError):
+                current_state = 0
             
-            logging.info(f"AC 2 Manual: {mode} | AC 2 Auto: {auto} -> Commanding AC 1 to {target}")
+            # 3. The Strict Logic: Ignore the static settings. 
+            # If the unit is physically operating in 1, 2, or 3, force AC 1 to 2.
+            target = 2 if current_state in [1, 2, 3] else 0
+            
+            logging.info(f"AC 2 Active State is {current_state} -> Commanding AC 1 to {target}")
             cloud.set_mode(target)
             
         except Exception as e:
