@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # ==================== CONFIGURATION ====================
 APP_ID = "wx6e1af3fa84fbe523"
-SSO_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM3MjI1NDYsImlhdCI6MTc4MTEzMDU0Niwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.QQuxbnzJoZ_s4ncpSHX6jPA9y4_3V06EjfftN4ErWY0pnk0YPhM2a9Ow7Ix4-bEjlJyqUx9leU-OFI0Xbilt30gqlNiGBNFH2L-bGjBStNPotNh9YA0-aPMm5_9f5ZCxcKX6mHjfzG60FotBrmDZjIW7oqWb5OwoY__myvj_XZE"
+SSO_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM3MjI1NDYsImlhdCI6MTt4MTEzMDU0Niwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.QQuxbnzJoZ_s4ncpSHX6jPA9y4_3V06EjfftN4ErWY0pnk0YPhM2a9Ow7Ix4-bEjlJyqUx9leU-OFI0Xbilt30gqlNiGBNFH2L-bGjBStNPotNh9YA0-aPMm5_9f5ZCxcKX6mHjfzG60FotBrmDZjIW7oqWb5OwoY__myvj_XZE"
 
 AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
@@ -177,19 +177,25 @@ class TCLCloud:
 def get_target_mode(ac2_state):
     try:
         gen_mode = int(ac2_state.get("generatorMode", 0))
+        auto_gen_mode = int(ac2_state.get("autoGeneratorMode", 0))
     except (ValueError, TypeError):
         gen_mode = 0
+        auto_gen_mode = 0
         
-    if gen_mode == 0 or gen_mode == 6:
-        return 0
-    elif gen_mode in [1, 2, 3]:
+    # Rule 1: Manual configuration sets specific level restriction
+    if gen_mode in [1, 2, 3]:
         return 2
         
+    # Rule 2: Manual configuration is inactive, but smart cloud reporting flags active level restriction
+    if (gen_mode == 0 or gen_mode == 6) and (auto_gen_mode in [1, 2, 3]):
+        return 2
+        
+    # Rule 3: Clear power signature verified across both states
     return 0
 
 
 def main():
-    logging.info("Starting TCL AC Automation Script (Full AWS Sync & Date-Specific Override)...")
+    logging.info("Starting TCL AC Automation Script (Dual-Mode Cloud Evaluation)...")
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     cloud = TCLCloud()
@@ -235,7 +241,7 @@ def main():
                         if is_offline_window:
                             logging.info(f"EXAM BLACKOUT WINDOW DETECTED ({current_date_str}): Forcing AC 1 to Mode {target_mode} before network drops.")
                         else:
-                            logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
+                            logging.info(f"DESYNC DETECTED: AC 2 evaluation requires Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
                         
                         success = cloud.set_ac_generator_mode(AC1_DEVICE_ID, target_mode)
                         
