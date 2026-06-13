@@ -33,6 +33,20 @@ LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalanc
 
 # Define the GMT+3 Timezone for accurate scheduling
 BAGHDAD_TZ = timezone(timedelta(hours=3))
+
+# Exact exam calendar dates where the internet blackout occurs (YYYY-MM-DD)
+OFFLINE_DATES = [
+    "2026-06-13",  # Saturday
+    "2026-06-15",  # Monday
+    "2026-06-17",  # Wednesday
+    "2026-06-20",  # Saturday
+    "2026-06-22",  # Monday
+    "2026-06-24",  # Wednesday
+    "2026-06-27",  # Saturday
+    "2026-06-29",  # Monday
+    "2026-07-01",  # Wednesday
+    "2026-07-04"   # Saturday
+]
 # =======================================================
 
 
@@ -133,13 +147,11 @@ class TCLCloud:
                 "generatorMode": target_mode
             }
             
-            # If switching to National Grid (Mode 0), activate Turbo and max fan speed
             if target_mode == 0:
                 desired_state["turbo"] = 1
                 desired_state["windSpeed"] = 6
                 logging.info("Target Mode 0 detected. Adding Turbo and Max WindSpeed to payload.")
             else:
-                # If switching to Generator, ensure Turbo is disabled to save power
                 desired_state["turbo"] = 0
             
             payload = {
@@ -177,7 +189,7 @@ def get_target_mode(ac2_state):
 
 
 def main():
-    logging.info("Starting TCL AC Automation Script (Full AWS Sync & Time Override)...")
+    logging.info("Starting TCL AC Automation Script (Full AWS Sync & Date-Specific Override)...")
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     cloud = TCLCloud()
@@ -185,24 +197,25 @@ def main():
 
     while True:
         try:
-            # 1. Check local time (GMT+3)
-            now = datetime.now(BAGHDAD_TZ).time()
+            # 1. Check local date and time (GMT+3)
+            current_dt = datetime.now(BAGHDAD_TZ)
+            now_time = current_dt.time()
+            current_date_str = current_dt.strftime("%Y-%m-%d")
             
-            # Window begins at 5:55 AM (5 minutes before dropout) and ends at 7:30 AM
+            # Window begins at 5:55 AM and ends at 7:30 AM
             offline_start = dt_time(5, 55)
             offline_end = dt_time(7, 30)
             
-            is_offline_window = offline_start <= now < offline_end
+            # Trigger safety window only if the current date matches the list
+            is_offline_window = (current_date_str in OFFLINE_DATES) and (offline_start <= now_time < offline_end)
             
             # 2. Fetch hardware states
             ac1_state = cloud.get_ac_state(AC1_DEVICE_ID)
             
             if ac1_state is not None:
-                # If we are in the blackout safety window, forcefully ignore AC 2 and set target to Mode 2
                 if is_offline_window:
                     target_mode = 2
                 else:
-                    # Normal operation: Fetch AC 2 and calculate target
                     ac2_state = cloud.get_ac_state(AC2_DEVICE_ID)
                     if ac2_state is not None:
                         target_mode = get_target_mode(ac2_state)
@@ -220,7 +233,7 @@ def main():
                         logging.info("-" * 40)
                         
                         if is_offline_window:
-                            logging.info(f"SCHEDULED BLACKOUT: Forcing AC 1 to Mode {target_mode} before network drops.")
+                            logging.info(f"EXAM BLACKOUT WINDOW DETECTED ({current_date_str}): Forcing AC 1 to Mode {target_mode} before network drops.")
                         else:
                             logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
                         
