@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- HARDCODED TOKENS ---
 SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
-AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTM0ODkzOCJ9.-wmsuNpkEpj0qoAtGRR8G7zpH1YHyTaQJ63ZK0O3hpBm7JRsJxe0mzBJ3CGywLTf8TzfyG8bavac5ERjmwKC1A"
+AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTM0ODkzNiJ9.u7nNqObfzcgzvgj6pjduP42IiRsuYTN03_1Ac-V3xGaAdIa1GtDT4a_81eTY8w2Jv002BQVxjzp6GjG4FHN8IQ"
 
 AC1, AC2 = "C-0JABFAAAI", "DfaxahFAAAE"
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
@@ -61,31 +61,29 @@ def main():
             if not ac2:
                 continue
                 
-            # Extract the critical variables
             power = int(ac2.get("powerSwitch", 0))
-            power_source = int(ac2.get("powerSource", 0)) # 1 = Generator Active
-            auto = int(ac2.get("autoGeneratorMode", 0))   # To log the specific level
-            mode = int(ac2.get("generatorMode", 6))       # Manual mode fallback
+            power_source = int(ac2.get("powerSource", 0)) 
+            auto = int(ac2.get("autoGeneratorMode", 0))   
+            mode = int(ac2.get("generatorMode", 6))       
             
-            # The STRICT Hardware Logic
+            # --- THE PERFECTED LOGIC ---
+            # 1. Is AC2 manually restricted by you?
+            manual_throttle = mode in [1, 2, 3]
+            
+            # 2. Is Auto-Mode active AND the generator is physically powering it?
+            auto_throttle = (auto in [1, 2, 3]) and (power_source == 1)
+
             if power == 0:
                 target = 0
                 logging.info("AC 2 is OFF -> Commanding AC 1 to 0 (Off)")
-                
-            elif power_source == 1:
-                # The hardware explicitly detects it is running on the generator!
+            elif manual_throttle or auto_throttle:
+                # If either setting says to throttle, set AC1 to Level 2
                 target = 2
-                logging.info(f"AC 2 is ON GENERATOR (Auto level: {auto}) -> Commanding AC 1 to 2")
-                
-            elif mode in [1, 2, 3]:
-                # Fallback: Just in case you manually force it into a generator mode
-                target = 2
-                logging.info(f"AC 2 is manually forced to Gen Mode {mode} -> Commanding AC 1 to 2")
-                
+                logging.info(f"AC 2 is THROTTLING (Manual: {mode}, Auto: {auto}, Source: {power_source}) -> Commanding AC 1 to 2")
             else:
-                # Unit is ON and powerSource is not 1 (meaning it's on Grid)
+                # AC2 is unrestricted (L6 or grid power), let AC1 run free
                 target = 0
-                logging.info("AC 2 is on GRID -> Commanding AC 1 to 0")
+                logging.info(f"AC 2 is UNRESTRICTED (L6/Off) -> Commanding AC 1 to 0")
             
             cloud.set_mode(target)
             
