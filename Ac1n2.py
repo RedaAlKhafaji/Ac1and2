@@ -7,6 +7,7 @@ import threading
 import requests
 import urllib3
 import boto3
+from datetime import datetime, time as dt_time, timezone, timedelta
 from botocore.config import Config
 from botocore import UNSIGNED
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -29,6 +30,9 @@ AC1_DEVICE_ID = "C-0JABFAAAI"
 AC2_DEVICE_ID = "DfaxahFAAAE"
 
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
+
+# Define the GMT+3 Timezone for accurate scheduling
+BAGHDAD_TZ = timezone(timedelta(hours=3))
 # =======================================================
 
 
@@ -62,7 +66,6 @@ class TCLCloud:
         self.credentials_expiry = 0
 
     def get_cognito_tokens(self):
-        """Fetches fresh AWS Cognito credentials from the TCL loadBalance API."""
         auth_headers = {
             "appid": APP_ID,
             "ssotoken": SSO_TOKEN,
@@ -77,7 +80,6 @@ class TCLCloud:
         return data["data"]["cognitoId"], data["data"]["cognitoToken"]
 
     def refresh_client(self):
-        """Ensures the AWS IoT Data Plane connection is active and valid."""
         if self.iot_client and time.time() < self.credentials_expiry - 300:
             return self.iot_client
         
@@ -112,7 +114,6 @@ class TCLCloud:
         return self.iot_client
 
     def get_ac_state(self, device_id):
-        """Pulls the exact, live hardware state directly from Amazon."""
         try:
             client = self.refresh_client()
             response = client.get_thing_shadow(thingName=device_id)
@@ -125,7 +126,6 @@ class TCLCloud:
             return None
 
     def set_ac_generator_mode(self, device_id, target_mode):
-        """Sends the command payload securely to the physical unit."""
         try:
             client = self.refresh_client()
             
@@ -137,7 +137,7 @@ class TCLCloud:
             if target_mode == 0:
                 desired_state["turbo"] = 1
                 desired_state["windSpeed"] = 6
-                logging.info(f"Target Mode 0 detected. Adding Turbo and Max WindSpeed to payload.")
+                logging.info("Target Mode 0 detected. Adding Turbo and Max WindSpeed to payload.")
             else:
                 # If switching to Generator, ensure Turbo is disabled to save power
                 desired_state["turbo"] = 0
@@ -163,7 +163,6 @@ class TCLCloud:
 
 
 def get_target_mode(ac2_state):
-    """Calculates what AC 1 should be set to based strictly on physical power telemetry."""
     try:
         gen_mode = int(ac2_state.get("generatorMode", 0))
     except (ValueError, TypeError):
@@ -178,7 +177,7 @@ def get_target_mode(ac2_state):
 
 
 def main():
-    logging.info("Starting TCL AC Automation Script (Full AWS Sync)...")
+    logging.info("Starting TCL AC Automation Script (Full AWS Sync & Time Override)...")
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     cloud = TCLCloud()
@@ -186,29 +185,54 @@ def main():
 
     while True:
         try:
-            ac2_state = cloud.get_ac_state(AC2_DEVICE_ID)
+            # 1. Check local time (GMT+3)
+            now = datetime.now(BAGHDAD_TZ).time()
+            
+            # Window begins at 5:55 AM (5 minutes before dropout) and ends at 7:30 AM
+            offline_start = dt_time(5, 55)
+            offline_end = dt_time(7, 30)
+            
+            is_offline_window = offline_start <= now < offline_end
+            
+            # 2. Fetch hardware states
             ac1_state = cloud.get_ac_state(AC1_DEVICE_ID)
             
-            if ac2_state is not None and ac1_state is not None:
-                target_mode = get_target_mode(ac2_state)
-                
-                try:
-                    current_mode = int(ac1_state.get("generatorMode", 0))
-                except (ValueError, TypeError):
-                    current_mode = 0
-                
-                if current_mode != target_mode:
-                    logging.info("-" * 40)
-                    logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
-                    logging.info(f"Applying Mode {target_mode} to AC 1...")
-                    
-                    success = cloud.set_ac_generator_mode(AC1_DEVICE_ID, target_mode)
-                    
-                    if success:
-                        logging.info(f"Success! AC 1 commanded to Mode {target_mode}.")
+            if ac1_state is not None:
+                # If we are in the blackout safety window, forcefully ignore AC 2 and set target to Mode 2
+                if is_offline_window:
+                    target_mode = 2
+                else:
+                    # Normal operation: Fetch AC 2 and calculate target
+                    ac2_state = cloud.get_ac_state(AC2_DEVICE_ID)
+                    if ac2_state is not None:
+                        target_mode = get_target_mode(ac2_state)
                     else:
-                        logging.warning("Command delivery failed. Retrying next loop.")
-                    logging.info("-" * 40)
+                        target_mode = None
+                
+                # 3. Apply changes if there is a desync
+                if target_mode is not None:
+                    try:
+                        current_mode = int(ac1_state.get("generatorMode", 0))
+                    except (ValueError, TypeError):
+                        current_mode = 0
+                    
+                    if current_mode != target_mode:
+                        logging.info("-" * 40)
+                        
+                        if is_offline_window:
+                            logging.info(f"SCHEDULED BLACKOUT: Forcing AC 1 to Mode {target_mode} before network drops.")
+                        else:
+                            logging.info(f"DESYNC DETECTED: AC 2 wants Mode {target_mode}, but AC 1 is in Mode {current_mode}.")
+                        
+                        success = cloud.set_ac_generator_mode(AC1_DEVICE_ID, target_mode)
+                        
+                        if success:
+                            logging.info(f"Success! AC 1 commanded to Mode {target_mode}.")
+                        else:
+                            logging.warning("Command delivery failed. Retrying next loop.")
+                            
+                        logging.info("-" * 40)
+                        
         except Exception as e:
             logging.error(f"Unexpected error in main loop: {e}")
             
