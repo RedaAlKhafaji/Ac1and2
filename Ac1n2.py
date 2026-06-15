@@ -2,15 +2,22 @@ import os, json, time, logging, threading, requests, boto3, urllib3
 from botocore.config import Config
 from botocore import UNSIGNED
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from tuya_connector import TuyaOpenAPI
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- HARDCODED TOKENS ---
-SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
-AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTM0ODkzNiJ9.u7nNqObfzcgzvgj6pjduP42IiRsuYTN03_1Ac-V3xGaAdIa1GtDT4a_81eTY8w2Jv002BQVxjzp6GjG4FHN8IQ"
+# --- TUYA PLUG SETTINGS (YOUR GRID SENSOR) ---
+TUYA_ACCESS_ID = "qs4anwqyckn79fdfj95f"
+TUYA_ACCESS_SECRET = "bf921a8f1b9d40428977bb43e886fd1b"
+TUYA_DEVICE_ID = "ebd5b133c4d8aa2376su12"
+TUYA_ENDPOINT = "https://openapi.tuyaeu.com" # Central Europe Data Center
 
-AC1, AC2 = "C-0JABFAAAI", "DfaxahFAAAE"
+# --- TCL AC SETTINGS ---
+SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
+AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4MTM0ODkzOCJ9.-wmsuNpkEpj0qoAtGRR8G7zpH1YHyTaQJ63ZK0O3hpBm7JRsJxe0mzBJ3CGywLTf8TzfyG8bavac5ERjmwKC1A"
+
+AC1 = "C-0JABFAAAI" 
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 APP_ID = "wx6e1af3fa84fbe523"
 
@@ -40,56 +47,50 @@ class TCLCloud:
 
     def set_mode(self, target):
         if not self.iot: return
+        # Target 0 = Grid (Turbo ON). Target 2 = Generator (Turbo OFF).
         payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1 if target == 0 else 0}}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
 
-    def get_ac2(self):
-        if not self.iot: return {}
-        shadow = self.iot.get_thing_shadow(thingName=AC2)
-        return json.loads(shadow['payload'].read().decode('utf-8')).get("state", {}).get("reported", {})
+def get_plug_status(openapi):
+    try:
+        response = openapi.get(f"/v1.0/devices/{TUYA_DEVICE_ID}")
+        if response.get("success"):
+            return response["result"].get("online", False)
+        else:
+            logging.error(f"Tuya API Error: {response.get('msg')}")
+            return False
+    except Exception as e:
+        logging.error(f"Failed to fetch Tuya status: {e}")
+        return False
 
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    cloud = TCLCloud()
+    
+    tcl_cloud = TCLCloud()
+    tuya_api = TuyaOpenAPI(TUYA_ENDPOINT, TUYA_ACCESS_ID, TUYA_ACCESS_SECRET)
+    tuya_api.connect()
     
     while True:
         try:
-            if cloud.iot is None:
-                cloud.connect()
+            if tcl_cloud.iot is None:
+                tcl_cloud.connect()
                 
-            ac2 = cloud.get_ac2()
-            if not ac2:
-                continue
-                
-            power = int(ac2.get("powerSwitch", 0))
-            power_source = int(ac2.get("powerSource", 0)) 
-            auto = int(ac2.get("autoGeneratorMode", 0))   
-            mode = int(ac2.get("generatorMode", 6))       
+            is_grid_online = get_plug_status(tuya_api)
             
-            # --- THE PERFECTED LOGIC ---
-            # 1. Is AC2 manually restricted by you?
-            manual_throttle = mode in [1, 2, 3]
-            
-            # 2. Is Auto-Mode active AND the generator is physically powering it?
-            auto_throttle = (auto in [1, 2, 3]) and (power_source == 1)
-
-            if power == 0:
+            if is_grid_online:
                 target = 0
-                logging.info("AC 2 is OFF -> Commanding AC 1 to 0 (Off)")
-            elif manual_throttle or auto_throttle:
-                # If either setting says to throttle, set AC1 to Level 2
-                target = 2
-                logging.info(f"AC 2 is THROTTLING (Manual: {mode}, Auto: {auto}, Source: {power_source}) -> Commanding AC 1 to 2")
+                logging.info("Grid is ON (Plug Online) -> Commanding AC 1 to Grid Mode + Turbo")
             else:
-                # AC2 is unrestricted (L6 or grid power), let AC1 run free
-                target = 0
-                logging.info(f"AC 2 is UNRESTRICTED (L6/Off) -> Commanding AC 1 to 0")
+                target = 2
+                logging.info("Grid is OFF (Plug Offline) -> Commanding AC 1 to Gen Mode (L2)")
             
-            cloud.set_mode(target)
+            tcl_cloud.set_mode(target)
             
         except Exception as e:
             logging.error(f"Loop error: {e}")
-            cloud.iot = None 
+            tcl_cloud.iot = None 
+            try: tuya_api.connect()
+            except: pass
             
         time.sleep(60)
 
