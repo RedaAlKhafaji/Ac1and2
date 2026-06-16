@@ -11,7 +11,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 TUYA_ACCESS_ID = "qs4anwqyckn79fdfj95f"
 TUYA_ACCESS_SECRET = "bf921a8f1b9d40428977bb43e886fd1b"
 TUYA_DEVICE_ID = "ebd5b133c4d8aa2376su12"
-TUYA_ENDPOINT = "https://openapi.tuyaeu.com" # Central Europe Data Center
+TUYA_ENDPOINT = "https://openapi.tuyaus.com" # Western America Data Center
+
 
 # --- TCL AC SETTINGS ---
 SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODM5MzkxMzQsImlhdCI6MTc4MTM0NzEzNCwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.DlLdnc4hF6JOk-6RXP7TIdP8OPjpIZdMcdt6qw6iqKAxxoK5tvwJTjK0X6RxOkeVNagL1sX12VsrpMEE0Da3Gr_eyEQdtnPKmvSNBqHRYh0LhcpcCC4sQ_tIIZkJV61ZMKqnGKxShyaoWvaJyRzuroBqZPuEFQua6BVEhmDuVHQ"
