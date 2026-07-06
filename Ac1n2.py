@@ -69,13 +69,18 @@ def get_plug_status(openapi):
     try:
         response = openapi.get(f"/v1.0/devices/{TUYA_DEVICE_ID}")
         if response.get("success"):
-            return response["result"].get("online", False)
+            result = response["result"]
+            is_online = result.get("online", False)
+            # --- DEBUG LINE BELOW ---
+            logging.info(f"RAW TUYA DATA -> Name: '{result.get('name')}' | Online Status: {is_online}")
+            return is_online
         else:
             logging.error(f"Tuya API Error (Sensor): {response.get('msg')}")
             return False
     except Exception as e:
         logging.error(f"Failed to fetch Tuya sensor status: {e}")
         return False
+
 
 def set_second_plug(openapi, turn_on):
     try:
