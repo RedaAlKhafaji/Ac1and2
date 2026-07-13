@@ -24,16 +24,6 @@ LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalanc
 APP_ID = "wx6e1af3fa84fbe523"
 
 # --- INTENTIONAL SHUTOFF DATES (YYYY-MM-DD) ---
-SHUTOFF_DATES = [
-    "2026-06-13", # السبت
-    "2026-06-15", # الاثنين
-    "2026-06-18", # الخميس
-    "2026-06-21", # الأحد
-    "2026-06-24", # الأربعاء
-    "2026-06-28", # الأحد
-    "2026-07-01", # الأربعاء
-    "2026-07-04"  # السبت
-]
 
 class RenderHealthCheckServer(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers()
