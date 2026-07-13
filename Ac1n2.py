@@ -51,9 +51,10 @@ class TCLCloud:
 
     def set_mode(self, target):
         if not self.iot: return
-        # Target 0 = Grid (Turbo ON). Target 2 = Generator (Turbo OFF).
-        payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1 if target == 0 else 0}}}).encode('utf-8')
+        # Force turbo to 1 always, regardless of the target mode
+        payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1}}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
+
 
 def get_plug_status(openapi):
     try:
