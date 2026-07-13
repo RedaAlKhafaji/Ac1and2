@@ -23,8 +23,6 @@ AC1 = "C-0JABFAAAI"
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 APP_ID = "wx6e1af3fa84fbe523"
 
-# --- INTENTIONAL SHUTOFF DATES (YYYY-MM-DD) ---
-
 class RenderHealthCheckServer(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers()
     def do_HEAD(self): self.send_response(200); self.end_headers()
@@ -51,10 +49,9 @@ class TCLCloud:
 
     def set_mode(self, target):
         if not self.iot: return
-        # Force turbo to 1 always, regardless of the target mode
+        # Turbo mode forced to 1 (ON) always
         payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1}}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
-
 
 def get_plug_status(openapi):
     try:
@@ -62,7 +59,6 @@ def get_plug_status(openapi):
         if response.get("success"):
             result = response["result"]
             is_online = result.get("online", False)
-            # --- DEBUG LINE BELOW ---
             logging.info(f"RAW TUYA DATA -> Name: '{result.get('name')}' | Online Status: {is_online}")
             return is_online
         else:
@@ -71,7 +67,6 @@ def get_plug_status(openapi):
     except Exception as e:
         logging.error(f"Failed to fetch Tuya sensor status: {e}")
         return False
-
 
 def set_second_plug(openapi, turn_on):
     try:
@@ -94,41 +89,18 @@ def main():
             if tcl_cloud.iot is None:
                 tcl_cloud.connect()
                 
-            # 1. Get current time in Iraq (UTC + 3 hours)
-            iraq_tz = timezone(timedelta(hours=3))
-            now = datetime.now(iraq_tz)
-            current_date_str = now.strftime("%Y-%m-%d")
-            
-            # 2. Check if today is a scheduled shutoff day
-            is_schedule_active = False
-            if current_date_str in SHUTOFF_DATES:
-                # Convert current time to "minutes past midnight"
-                current_minutes = now.hour * 60 + now.minute
-                
-                # 5:55 AM = 355 mins. 7:30 AM = 450 mins.
-                start_window = 5 * 60 + 55
-                end_window = 7 * 60 + 30
-                
-                if start_window <= current_minutes < end_window:
-                    is_schedule_active = True
-                    
-            # 3. Get the physical plug status
+            # 1. Get the physical plug status
             is_grid_online = get_plug_status(tuya_api)
             
-            # 4. Decide the AC Mode & Second Plug State
-            if is_schedule_active:
-                target = 2
-                logging.info(f"Schedule Override Active for {current_date_str} at {now.strftime('%H:%M')} -> AC to Gen, Plug 2 OFF")
-                set_second_plug(tuya_api, False)
-                
-            elif is_grid_online:
+            # 2. Decide the AC Mode & Second Plug State
+            if is_grid_online:
                 target = 0
                 logging.info("Grid is ON -> AC to Grid, Plug 2 ON")
                 set_second_plug(tuya_api, True)
                 
             else:
                 target = 3
-                logging.info("Grid is OFF -> AC to Gen, Plug 2 OFF")
+                logging.info("Grid is OFF -> AC to Gen (L3), Plug 2 OFF")
                 set_second_plug(tuya_api, False)
             
             tcl_cloud.set_mode(target)
