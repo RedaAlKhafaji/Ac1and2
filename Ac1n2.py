@@ -63,10 +63,10 @@ def get_plug_status(openapi):
             return is_online
         else:
             logging.error(f"Tuya API Error (Sensor): {response.get('msg')}")
-            return False
+            return None # Changed to None to prevent false power cut reads
     except Exception as e:
         logging.error(f"Failed to fetch Tuya sensor status: {e}")
-        return False
+        return None # Changed to None
 
 def set_second_plug(openapi, turn_on):
     try:
@@ -84,6 +84,8 @@ def main():
     tuya_api = TuyaOpenAPI(TUYA_ENDPOINT, TUYA_ACCESS_ID, TUYA_ACCESS_SECRET)
     tuya_api.connect()
     
+    last_grid_state = None # Tracks the power state to save API calls
+    
     while True:
         try:
             if tcl_cloud.iot is None:
@@ -92,18 +94,25 @@ def main():
             # 1. Get the physical plug status
             is_grid_online = get_plug_status(tuya_api)
             
-            # 2. Decide the AC Mode & Second Plug State
-            if is_grid_online:
-                target = 0
-                logging.info("Grid is ON -> AC to Grid, Plug 2 ON")
-                set_second_plug(tuya_api, True)
-                
+            # 2. Decide the AC Mode & Second Plug State safely
+            if is_grid_online is None:
+                logging.warning("Grid status unknown this cycle — skipping action to avoid a false switch.")
             else:
-                target = 3
-                logging.info("Grid is OFF -> AC to Gen (L3), Plug 2 OFF")
-                set_second_plug(tuya_api, False)
-            
-            tcl_cloud.set_mode(target)
+                # Only send API commands if the power state has flipped
+                if is_grid_online != last_grid_state:
+                    if is_grid_online:
+                        target = 0
+                        logging.info("Grid is ON -> AC to Grid, Plug 2 ON")
+                        set_second_plug(tuya_api, True)
+                    else:
+                        target = 3
+                        logging.info("Grid is OFF -> AC to Gen (L3), Plug 2 OFF")
+                        set_second_plug(tuya_api, False)
+                    
+                    tcl_cloud.set_mode(target)
+                    last_grid_state = is_grid_online # Update the tracker
+                else:
+                    logging.info("Power state unchanged. Skipping redundant commands.")
             
         except Exception as e:
             logging.error(f"Loop error: {e}")
