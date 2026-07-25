@@ -17,7 +17,7 @@ TUYA_ENDPOINT = "https://openapi.tuyaus.com"       # Western America Data Center
 
 # --- TCL AC SETTINGS ---
 SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODY1NTE2OTYsImlhdCI6MTc4Mzk1OTY5Niwic2NhbkNvZGUiOiJudWxsIiwidXNlcm5hbWUiOiIyMTI0NTgyNDcifQ.E-6sMzruZiBn1bK5kV87d_cu8ZtXgEzbtokh72Rp_6Ofz6SfyJ-t1JyOXTBlnYd7EMCt2ibrGGSm4Mf7gnbF9J_uZ5Rreq8S5NDUuZWs5oBSnbi7IS9C7bDgfGUP47ZNPDD9DKkSG81IU6J33xoTNylGkpcjXWyYQ17bWO1LdL4"
-AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4Mzk2MTQ5NyJ9.U8ap2obAsedtu7IUMXO70shNAgr7y5MLgMuk1THyz-zVQ0ywBFXhEZ_hzafNvpKDsTwFE2uzgQ6Vtf6MEzcnYg"
+AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4NDk0MDc2MyJ9.dxgxTKHxz4hRkVsD3GIVtzFtQCR43ueYPjGlrL_nsQ-IMsx_OWSwRl6zEEZt1luNC_9q5z18Yv3TWRog-w6J2w"
 
 AC1 = "C-OJABFAAAI" 
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
