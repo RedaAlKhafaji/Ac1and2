@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- TUYA PLUG SETTINGS ---
 TUYA_ACCESS_ID = "ewtcedjchygrv47mpx9v"
 TUYA_ACCESS_SECRET = "fe5d5d91ccd741f5b1b8b0063b7b4abd"
-TUYA_DEVICE_ID = "ebd5b133c4d8aa2376su12"          # The Grid Sensor Plug
-TUYA_DEVICE_ID_2 = "ebb1453d5297cf2ec9naor"        # The Mirror Plug
+TUYA_DEVICE_ID = "ebb1453d5297cf2ec9naor"          # The Grid Sensor Plug
+TUYA_DEVICE_ID_2 = "ebd5b133c4d8aa2376su12"        # The Mirror Plug 
 TUYA_ENDPOINT = "https://openapi.tuyaus.com"       # Western America Data Center
 
 # --- TCL AC SETTINGS ---
