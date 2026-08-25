@@ -104,7 +104,7 @@ def main():
                         logging.info("Grid is ON -> AC to Grid, Plug 2 ON")
                         set_second_plug(tuya_api, True)
                     else:
-                        target = 3
+                        target = 2
                         logging.info("Grid is OFF -> AC to Gen (L3), Plug 2 OFF")
                         set_second_plug(tuya_api, False)
                     
