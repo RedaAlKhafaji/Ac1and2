@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 TUYA_ACCESS_ID = "ewtcedjchygrv47mpx9v"
 TUYA_ACCESS_SECRET = "fe5d5d91ccd741f5b1b8b0063b7b4abd"
 TUYA_DEVICE_ID = "ebb1453d5297cf2ec9naor"          # The Grid Sensor Plug
-TUYA_DEVICE_ID_2 = "ebd5b133c4d8aa2376su12"        # The Mirror Plug 
 TUYA_ENDPOINT = "https://openapi.tuyaus.com"       # Western America Data Center
 
 # --- TCL AC SETTINGS ---
@@ -67,15 +66,6 @@ def get_plug_status(openapi):
         logging.error(f"Failed to fetch Tuya sensor status: {e}")
         return None # Changed to None
 
-def set_second_plug(openapi, turn_on):
-    try:
-        commands = {'commands': [{'code': 'switch_1', 'value': turn_on}]}
-        response = openapi.post(f'/v1.0/devices/{TUYA_DEVICE_ID_2}/commands', commands)
-        if not response.get("success"):
-            logging.error(f"Tuya API Error (Mirror Plug): {response.get('msg')}")
-    except Exception as e:
-        logging.error(f"Failed to switch second plug: {e}")
-
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
@@ -93,7 +83,7 @@ def main():
             # 1. Get the physical plug status
             is_grid_online = get_plug_status(tuya_api)
             
-            # 2. Decide the AC Mode & Second Plug State safely
+            # 2. Decide the AC Mode safely
             if is_grid_online is None:
                 logging.warning("Grid status unknown this cycle — skipping action to avoid a false switch.")
             else:
@@ -101,12 +91,11 @@ def main():
                 if is_grid_online != last_grid_state:
                     if is_grid_online:
                         target = 0
-                        logging.info("Grid is ON -> AC to Grid, Plug 2 ON")
-                        set_second_plug(tuya_api, True)
+                        logging.info("Grid is ON -> AC to Grid")
+                    
                     else:
                         target = 2
-                        logging.info("Grid is OFF -> AC to Gen (L3), Plug 2 OFF")
-                        set_second_plug(tuya_api, False)
+                        logging.info("Grid is OFF -> AC to Gen (L2)")
                     
                     tcl_cloud.set_mode(target)
                     last_grid_state = is_grid_online # Update the tracker
@@ -119,7 +108,7 @@ def main():
             try: tuya_api.connect()
             except: pass
             
-        time.sleep(120)
+        time.sleep(60)
 
 if __name__ == "__main__":
     main()
