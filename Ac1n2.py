@@ -94,7 +94,7 @@ def main():
                         logging.info("Grid is ON -> AC to Grid")
                     
                     else:
-                        target = 2
+                        target = 3
                         logging.info("Grid is OFF -> AC to Gen (L2)")
                     
                     tcl_cloud.set_mode(target)
