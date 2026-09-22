@@ -182,7 +182,7 @@ def main():
             try: tuya_api.connect()
             except: pass
             
-        time.sleep(60)
+        time.sleep(120)
 
 if __name__ == "__main__":
     main()
