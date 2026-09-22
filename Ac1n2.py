@@ -42,7 +42,7 @@ def fetch_tcl_tokens(email, password):
         "content-type": "application/json; charset=UTF-8",
     }
     
-    # Step 1: Global Login
+    # Step 1: Global Login (Updated to the new pa.account.tcl.com endpoint)
     login_payload = {
         "equipment": 2,
         "password": pw_md5,
@@ -54,16 +54,16 @@ def fetch_tcl_tokens(email, password):
         "captchaRule": 2,
         "channel": "app",
     }
-    login_resp = requests.post("https://app.tcljd.com/v2/app/user/login", json=login_payload, headers=headers, verify=False).json()
+    login_resp = requests.post("https://pa.account.tcl.com/account/login?clientId=54148614", json=login_payload, headers=headers, verify=False).json()
     
     if login_resp.get("status") != 1:
         raise RuntimeError(f"TCL Login Failed. Check credentials. Response: {login_resp}")
         
     sso_token = login_resp["token"]
     
-    # Step 2: Get regional Cloud URL
+    # Step 2: Get regional Cloud URL (Updated to the new prod-center endpoint)
     urls_payload = {"ssoId": email, "ssoToken": sso_token}
-    urls_resp = requests.post("https://app.tcljd.com/v3/app/user/get_cloud_urls", json=urls_payload, headers=headers, verify=False).json()
+    urls_resp = requests.post("https://prod-center.aws.tcljd.com/v3/global/cloud_url_get", json=urls_payload, headers=headers, verify=False).json()
     cloud_url = urls_resp["data"]["cloud_url"]
     
     # Step 3: Refresh tokens for SaaS (AT) Token
