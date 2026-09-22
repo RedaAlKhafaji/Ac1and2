@@ -42,7 +42,7 @@ def fetch_tcl_tokens(email, password):
         "content-type": "application/json; charset=UTF-8",
     }
     
-    # Step 1: Global Login (Updated to the new pa.account.tcl.com endpoint)
+    # Step 1: Global Login
     login_payload = {
         "equipment": 2,
         "password": pw_md5,
@@ -59,20 +59,34 @@ def fetch_tcl_tokens(email, password):
     if login_resp.get("status") != 1:
         raise RuntimeError(f"TCL Login Failed. Check credentials. Response: {login_resp}")
         
-    sso_token = login_resp["token"]
+    sso_token = login_resp.get("token")
     
-    # Step 2: Get regional Cloud URL (Updated to the new prod-center endpoint)
-    urls_payload = {"ssoId": email, "ssoToken": sso_token}
+    # EXTRACT NUMERIC USER ID (e.g., 212458247)
+    # TCL's internal systems use this number for auth, not the email string
+    user_id = login_resp.get("user", {}).get("username")
+    if not user_id:
+        raise RuntimeError(f"Failed to extract numeric user_id. Response: {login_resp}")
+    
+    # Step 2: Get regional Cloud URL using the numeric user_id
+    urls_payload = {"ssoId": user_id, "ssoToken": sso_token}
     urls_resp = requests.post("https://prod-center.aws.tcljd.com/v3/global/cloud_url_get", json=urls_payload, headers=headers, verify=False).json()
+    
+    if "data" not in urls_resp or "cloud_url" not in urls_resp.get("data", {}):
+        raise RuntimeError(f"Failed to fetch cloud_url. TCL Response: {urls_resp}")
+        
     cloud_url = urls_resp["data"]["cloud_url"]
     
-    # Step 3: Refresh tokens for SaaS (AT) Token
+    # Step 3: Refresh tokens for SaaS (AT) Token using the numeric user_id
     ref_payload = {
-        "userId": email,
+        "userId": user_id,
         "ssoToken": sso_token,
         "appId": APP_ID
     }
     ref_resp = requests.post(f"{cloud_url}/v3/auth/refresh_tokens", json=ref_payload, headers=headers, verify=False).json()
+    
+    if "data" not in ref_resp or "saasToken" not in ref_resp.get("data", {}):
+        raise RuntimeError(f"Failed to fetch saasToken. TCL Response: {ref_resp}")
+        
     at_token = ref_resp["data"]["saasToken"]
     
     return sso_token, at_token
