@@ -1,4 +1,4 @@
-import os, json, time, logging, threading, requests, boto3, urllib3
+import os, json, time, logging, threading, requests, boto3, urllib3, hashlib
 from datetime import datetime, timezone, timedelta
 from botocore.config import Config
 from botocore import UNSIGNED
@@ -15,8 +15,8 @@ TUYA_DEVICE_ID = "ebb1453d5297cf2ec9naor"          # The Grid Sensor Plug
 TUYA_ENDPOINT = "https://openapi.tuyaus.com"       # Western America Data Center
 
 # --- TCL AC SETTINGS ---
-SSO = "eyJhbGciOiJSUzI1NiJ9.eyJvZmZsaW5lIjpmYWxzZSwicmVnaW9uIjoiU0ciLCJleHAiOjE3ODk4NjYwOTYsImlhdCI6MTc4NzI3NDA5Niwic2NhbkNvZGUiOm51bGwsInVzZXJuYW1lIjoiMjEyNDU4MjQ3In0.Td3GSB_1WcNB7qhto4ikT2xF9jQfPaaMIRdI14gL1fZhoJVV1RhgwhXnhskpUgCqL1ZnSa3psJTUruJqGzPeaJYy6AKNRJ3y0MuRmCSJCfM91gr7IpVR8fdwZ02pEFo06TPfI2wU-Heva4rmj74IK_7i9XP8w8U5Tha9Pfg1YyQ"
-AT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzc29JZCI6IjIxMjQ1ODI0NyIsImFwcElkIjoid3g2ZTFhZjNmYTg0ZmJlNTIzIiwibWFjIjoiZGVmYXVsdCIsImV4cGlyZWREYXRlIjoiMTc4NzI3NjY0NyJ9.osB-s5-6HQwh4SqEWpLXarV3tGANitUvVZlpfam54BOfI6vOQ1112qOZAaMgkXjUBiI1ibNyk1MwtdbHjBRkRw"
+TCL_EMAIL = os.environ.get("TCL_EMAIL")
+TCL_PASSWORD = os.environ.get("TCL_PASSWORD")
 AC1 = "C-0JABFAAAI" 
 LOAD_BALANCE_URL = "https://eu-api-prod.aws.tcljd.com/v1/auth/service/loadBalance"
 APP_ID = "wx6e1af3fa84fbe523"
@@ -30,12 +30,65 @@ def run_health_check_server():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), RenderHealthCheckServer).serve_forever()
 
+def fetch_tcl_tokens(email, password):
+    """Replicates the TCL app login flow to auto-generate SSO and AT tokens."""
+    pw_md5 = hashlib.md5(password.encode("utf-8")).hexdigest()
+    
+    headers = {
+        "th_platform": "android",
+        "th_version": "4.8.1",
+        "th_appbulid": "830",
+        "user-agent": "Android",
+        "content-type": "application/json; charset=UTF-8",
+    }
+    
+    # Step 1: Global Login
+    login_payload = {
+        "equipment": 2,
+        "password": pw_md5,
+        "osType": 1,
+        "username": email,
+        "clientVersion": "4.8.1",
+        "osVersion": "6.0",
+        "deviceModel": "Android",
+        "captchaRule": 2,
+        "channel": "app",
+    }
+    login_resp = requests.post("https://app.tcljd.com/v2/app/user/login", json=login_payload, headers=headers, verify=False).json()
+    
+    if login_resp.get("status") != 1:
+        raise RuntimeError(f"TCL Login Failed. Check credentials. Response: {login_resp}")
+        
+    sso_token = login_resp["token"]
+    
+    # Step 2: Get regional Cloud URL
+    urls_payload = {"ssoId": email, "ssoToken": sso_token}
+    urls_resp = requests.post("https://app.tcljd.com/v3/app/user/get_cloud_urls", json=urls_payload, headers=headers, verify=False).json()
+    cloud_url = urls_resp["data"]["cloud_url"]
+    
+    # Step 3: Refresh tokens for SaaS (AT) Token
+    ref_payload = {
+        "userId": email,
+        "ssoToken": sso_token,
+        "appId": APP_ID
+    }
+    ref_resp = requests.post(f"{cloud_url}/v3/auth/refresh_tokens", json=ref_payload, headers=headers, verify=False).json()
+    at_token = ref_resp["data"]["saasToken"]
+    
+    return sso_token, at_token
+
 class TCLCloud:
     def __init__(self): 
         self.iot = None
 
     def connect(self):
-        headers = {"appid": APP_ID, "ssotoken": SSO, "accesstoken": AT}
+        logging.info("Generating fresh TCL tokens via auto-login...")
+        if not TCL_EMAIL or not TCL_PASSWORD:
+            raise RuntimeError("Missing TCL_EMAIL or TCL_PASSWORD in Render Environment Variables.")
+            
+        sso_token, at_token = fetch_tcl_tokens(TCL_EMAIL, TCL_PASSWORD)
+        
+        headers = {"appid": APP_ID, "ssotoken": sso_token, "accesstoken": at_token}
         resp = requests.get(LOAD_BALANCE_URL, headers=headers, verify=False).json()
         data = resp["data"]
         
@@ -47,7 +100,6 @@ class TCLCloud:
 
     def set_mode(self, target):
         if not self.iot: return
-        # Turbo mode forced to 1 (ON) always
         payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": 1}}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
 
@@ -61,10 +113,10 @@ def get_plug_status(openapi):
             return is_online
         else:
             logging.error(f"Tuya API Error (Sensor): {response.get('msg')}")
-            return None # Changed to None to prevent false power cut reads
+            return None 
     except Exception as e:
         logging.error(f"Failed to fetch Tuya sensor status: {e}")
-        return None # Changed to None
+        return None 
 
 def main():
     threading.Thread(target=run_health_check_server, daemon=True).start()
@@ -73,32 +125,28 @@ def main():
     tuya_api = TuyaOpenAPI(TUYA_ENDPOINT, TUYA_ACCESS_ID, TUYA_ACCESS_SECRET)
     tuya_api.connect()
     
-    last_grid_state = None # Tracks the power state to save API calls
+    last_grid_state = None 
     
     while True:
         try:
             if tcl_cloud.iot is None:
                 tcl_cloud.connect()
                 
-            # 1. Get the physical plug status
             is_grid_online = get_plug_status(tuya_api)
             
-            # 2. Decide the AC Mode safely
             if is_grid_online is None:
                 logging.warning("Grid status unknown this cycle — skipping action to avoid a false switch.")
             else:
-                # Only send API commands if the power state has flipped
                 if is_grid_online != last_grid_state:
                     if is_grid_online:
                         target = 0
                         logging.info("Grid is ON -> AC to Grid")
-                    
                     else:
                         target = 2
                         logging.info("Grid is OFF -> AC to Gen (L2)")
                     
                     tcl_cloud.set_mode(target)
-                    last_grid_state = is_grid_online # Update the tracker
+                    last_grid_state = is_grid_online 
                 else:
                     logging.info("Power state unchanged. Skipping redundant commands.")
             
