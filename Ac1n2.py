@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- TUYA PLUG SETTINGS ---
 TUYA_ACCESS_ID = "ewtcedjchygrv47mpx9v"
 TUYA_ACCESS_SECRET = "fe5d5d91ccd741f5b1b8b0063b7b4abd"
-TUYA_DEVICE_ID = "ebb1453d5297cf2ec9naor"          # The Grid Sensor Plug
+TUYA_DEVICE_ID = "ebb1453d5297cf2ec9naor"          # Currently targeting 'freg' as the Grid Sensor
 TUYA_ENDPOINT = "https://openapi.tuyaus.com"       # Western America Data Center
 
 # --- TCL AC SETTINGS ---
@@ -61,13 +61,12 @@ def fetch_tcl_tokens(email, password):
         
     sso_token = login_resp.get("token")
     
-    # EXTRACT NUMERIC USER ID (e.g., 212458247)
-    # TCL's internal systems use this number for auth, not the email string
+    # EXTRACT NUMERIC USER ID
     user_id = login_resp.get("user", {}).get("username")
     if not user_id:
         raise RuntimeError(f"Failed to extract numeric user_id. Response: {login_resp}")
     
-    # Step 2: Get regional Cloud URL using the numeric user_id
+    # Step 2: Get regional Cloud URL
     urls_payload = {"ssoId": user_id, "ssoToken": sso_token}
     urls_resp = requests.post("https://prod-center.aws.tcljd.com/v3/global/cloud_url_get", json=urls_payload, headers=headers, verify=False).json()
     
@@ -76,7 +75,7 @@ def fetch_tcl_tokens(email, password):
         
     cloud_url = urls_resp["data"]["cloud_url"]
     
-    # Step 3: Refresh tokens for SaaS (AT) Token using the numeric user_id
+    # Step 3: Refresh tokens for SaaS (AT) Token
     ref_payload = {
         "userId": user_id,
         "ssoToken": sso_token,
@@ -119,11 +118,24 @@ class TCLCloud:
 
 def get_plug_status(openapi):
     try:
+        # 1. Ask the cloud for the cached status
         response = openapi.get(f"/v1.0/devices/{TUYA_DEVICE_ID}")
         if response.get("success"):
             result = response["result"]
             is_online = result.get("online", False)
-            logging.info(f"RAW TUYA DATA -> Name: '{result.get('name')}' | Online Status: {is_online}")
+            
+            # 2. ACTIVE PING CACHE-BUSTER
+            # If the cloud thinks it's online, force a physical packet delivery.
+            if is_online:
+                ping_cmd = {'commands': [{'code': 'switch_1', 'value': True}]}
+                ping_resp = openapi.post(f'/v1.0/devices/{TUYA_DEVICE_ID}/commands', ping_cmd)
+                
+                # If the packet fails to deliver, the grid is out (plug has no power).
+                if not ping_resp.get("success"):
+                    is_online = False
+                    logging.info(f"Cache-Buster Active: Plug is physically OFFLINE (Ping failed: {ping_resp.get('msg')})")
+
+            logging.info(f"RAW TUYA DATA -> Name: '{result.get('name')}' | True Online Status: {is_online}")
             return is_online
         else:
             logging.error(f"Tuya API Error (Sensor): {response.get('msg')}")
