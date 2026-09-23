@@ -113,7 +113,18 @@ class TCLCloud:
             self.connect()
             
         turbo_state = 1 if target == 0 else 0
-        payload = json.dumps({"state": {"desired": {"generatorMode": target, "turbo": turbo_state}}}).encode('utf-8')
+        
+        # Base JSON payload structure
+        desired_state = {
+            "generatorMode": target, 
+            "turbo": turbo_state
+        }
+        
+        # Inject Fan Speed parameter when targeting Generator Mode
+        if target == 2:
+            desired_state["fanSpeed"] = "auto"
+            
+        payload = json.dumps({"state": {"desired": desired_state}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
 
 def get_plug_status(openapi):
@@ -172,7 +183,7 @@ def main():
                         logging.info("Grid is ON -> AC to Grid (Turbo Enabled)")
                     else:
                         target = 2
-                        logging.info("Grid is OFF -> AC to Gen L2 (Turbo Disabled)")
+                        logging.info("Grid is OFF -> AC to Gen L2 (Turbo Disabled, Auto Fan)")
                     
                     tcl_cloud.set_mode(target)
                     last_grid_state = is_grid_online 
