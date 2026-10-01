@@ -113,14 +113,8 @@ class TCLCloud:
             self.connect()
             
         turbo_state = 1 if target == 0 else 0
+        desired_state = {"generatorMode": target, "turbo": turbo_state}
         
-        # Base JSON payload structure
-        desired_state = {
-            "generatorMode": target, 
-            "turbo": turbo_state
-        }
-        
-        # Inject Fan Speed parameter when targeting Generator Mode
         if target == 2:
             desired_state["fanSpeed"] = "auto"
             
@@ -140,14 +134,10 @@ def get_plug_status(openapi):
                 ping_resp = openapi.post(f'/v1.0/devices/{TUYA_DEVICE_ID}/commands', ping_cmd)
                 
                 if not ping_resp.get("success"):
-                    err_code = ping_resp.get("code")
-                    err_msg = str(ping_resp.get("msg", "")).lower()
-                    if err_code in [2001, 1106] or "offline" in err_msg:
-                        is_online = False
-                        logging.info(f"Cache-Buster: Confirmed physically OFFLINE ({err_msg})")
-                    else:
-                        logging.warning(f"Tuya ping error ({err_code}: {err_msg}) — ignoring to prevent false switch.")
-                        return None
+                    # WIDENED NET: Treat ANY ping failure as offline to prevent getting stuck
+                    is_online = False
+                    err_msg = ping_resp.get("msg", "Unknown error")
+                    logging.info(f"Cache-Buster: Plug ping failed ({err_msg}). Assuming physically OFFLINE.")
 
             logging.info(f"RAW TUYA DATA -> Name: '{result.get('name')}' | Online Status: {is_online}")
             return is_online
@@ -167,6 +157,11 @@ def main():
     
     last_grid_state = None 
     
+    # Enforcement tracking variables
+    enforcement_pending = False
+    enforcement_time = 0
+    enforcement_target = None
+    
     while True:
         try:
             if tcl_cloud.iot is None:
@@ -185,10 +180,23 @@ def main():
                         target = 2
                         logging.info("Grid is OFF -> AC to Gen L2 (Turbo Disabled, Auto Fan)")
                     
+                    # 1. Send immediate command
                     tcl_cloud.set_mode(target)
                     last_grid_state = is_grid_online 
+                    
+                    # 2. Schedule the Enforcement Ping for 3 minutes (180s) later
+                    enforcement_pending = True
+                    enforcement_time = time.time() + 180
+                    enforcement_target = target
+                    
                 else:
                     logging.info("Power state unchanged. Skipping redundant commands.")
+                    
+                    # 3. Check if we need to fire the pending Enforcement Ping
+                    if enforcement_pending and time.time() >= enforcement_time:
+                        logging.info(f"Enforcement Ping: Resending Target {enforcement_target} to ensure AC caught it post-boot.")
+                        tcl_cloud.set_mode(enforcement_target)
+                        enforcement_pending = False
             
         except Exception as e:
             logging.error(f"Loop error: {e}")
