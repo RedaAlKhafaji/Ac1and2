@@ -115,7 +115,7 @@ class TCLCloud:
         turbo_state = 1 if target == 0 else 0
         desired_state = {"generatorMode": target, "turbo": turbo_state}
         
-        if target == 2:
+        if target == 1:
             desired_state["fanSpeed"] = "auto"
             
         payload = json.dumps({"state": {"desired": desired_state}}).encode('utf-8')
@@ -177,7 +177,7 @@ def main():
                         target = 0
                         logging.info("Grid is ON -> AC to Grid (Turbo Enabled)")
                     else:
-                        target = 2
+                        target = 1
                         logging.info("Grid is OFF -> AC to Gen L2 (Turbo Disabled, Auto Fan)")
                     
                     # 1. Send immediate command
