@@ -114,16 +114,16 @@ class TCLCloud:
             
         if is_grid_on:
             desired_state = {
+                "powerSwitch": 1,
                 "power": "on",
-                "powerValue": 1,
                 "generatorMode": 0, 
                 "turbo": 1
             }
         else:
             # Send both the string and the integer value to ensure the AC accepts the shutdown
             desired_state = {
-                "power": "off",
-                "powerValue": 0
+                "powerSwitch": 0,
+                "power": "off"
             }
             
         payload = json.dumps({"state": {"desired": desired_state}}).encode('utf-8')
