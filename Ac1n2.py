@@ -107,16 +107,21 @@ class TCLCloud:
         )
         self.creds_time = time.time()
 
-    def set_mode(self, target):
+    def set_mode(self, is_grid_on):
         # Refresh AWS credentials proactively if older than 50 minutes
         if not self.iot or (time.time() - self.creds_time > 3000):
             self.connect()
             
-        turbo_state = 1 if target == 0 else 0
-        desired_state = {"generatorMode": target, "turbo": turbo_state}
-        
-        if target == 1:
-            desired_state["fanSpeed"] = "auto"
+        if is_grid_on:
+            desired_state = {
+                "power": "on",
+                "generatorMode": 0, 
+                "turbo": 1
+            }
+        else:
+            desired_state = {
+                "power": "off"
+            }
             
         payload = json.dumps({"state": {"desired": desired_state}}).encode('utf-8')
         self.iot.publish(topic=f"$aws/things/{AC1}/shadow/update", qos=1, payload=payload)
@@ -174,27 +179,26 @@ def main():
             else:
                 if is_grid_online != last_grid_state:
                     if is_grid_online:
-                        target = 0
-                        logging.info("Grid is ON -> AC to Grid (Turbo Enabled)")
+                        logging.info("Grid is ON -> Turning AC ON (Grid Mode, Turbo Enabled)")
                     else:
-                        target = 1
-                        logging.info("Grid is OFF -> AC to Gen L2 (Turbo Disabled, Auto Fan)")
+                        logging.info("Grid is OFF -> Turning AC OFF")
                     
                     # 1. Send immediate command
-                    tcl_cloud.set_mode(target)
+                    tcl_cloud.set_mode(is_grid_online)
                     last_grid_state = is_grid_online 
                     
                     # 2. Schedule the Enforcement Ping for 3 minutes (180s) later
                     enforcement_pending = True
                     enforcement_time = time.time() + 180
-                    enforcement_target = target
+                    enforcement_target = is_grid_online
                     
                 else:
                     logging.info("Power state unchanged. Skipping redundant commands.")
                     
                     # 3. Check if we need to fire the pending Enforcement Ping
                     if enforcement_pending and time.time() >= enforcement_time:
-                        logging.info(f"Enforcement Ping: Resending Target {enforcement_target} to ensure AC caught it post-boot.")
+                        state_str = "ON" if enforcement_target else "OFF"
+                        logging.info(f"Enforcement Ping: Resending power '{state_str}' to ensure AC caught it post-boot.")
                         tcl_cloud.set_mode(enforcement_target)
                         enforcement_pending = False
             
@@ -208,3 +212,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                      
